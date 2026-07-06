@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""
+ccr — Claude Code Remote. Thin client for a Claude Code AgentCore runtime.
+
+The agent runs entirely inside Amazon Bedrock AgentCore; this client only
+sends prompts (SigV4) and renders the event stream. Nothing is executed or
+collected locally.
+
+Usage:
+  ccr "Explain what an EC2 instance is in one sentence."
+  ccr "My name is Ada."; ccr "What's my name?"     # multi-turn, resumed
+  ccr --new-session "Start over."
+  ccr                                              # interactive REPL
+
+Runtime ARN resolution order:
+  --runtime <arn>  >  $CC_AGENTCORE_RUNTIME_ARN  >  ~/.ccr/runtime.arn
+The session id persists in ~/.ccr/session.id so consecutive shell commands
+continue the same conversation.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import uuid
+from pathlib import Path
+
+import boto3
+
+STATE_DIR = Path.home() / ".ccr"
+SESSION_FILE = STATE_DIR / "session.id"
+RUNTIME_FILE = STATE_DIR / "runtime.arn"
+
+DIM = "\033[90m"
+BOLD = "\033[1m"
+CYAN = "\033[36m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+RESET = "\033[0m"
+
+
+def resolve_runtime_arn(cli_arg: str | None) -> str:
+    for candidate in (cli_arg, os.environ.get("CC_AGENTCORE_RUNTIME_ARN")):
+        if candidate and candidate.strip():
+            return candidate.strip()
+    if RUNTIME_FILE.exists():
+        contents = RUNTIME_FILE.read_text().strip()
+        if contents:
+            return contents
+    sys.exit(
+        "error: runtime ARN not set. Pass --runtime <arn>, set "
+        f"CC_AGENTCORE_RUNTIME_ARN, or write it to {RUNTIME_FILE}."
+    )
+
+
+def resolve_session_id(new_session: bool) -> str:
+    if not new_session and SESSION_FILE.exists():
+        existing = SESSION_FILE.read_text().strip()
+        if existing:
+            return existing
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    fresh = f"ccr-{uuid.uuid4()}"
+    SESSION_FILE.write_text(fresh + "\n")
+    return fresh
+
+
+def region_from_arn(arn: str) -> str:
+    # arn:aws:bedrock-agentcore:REGION:account:runtime/... — using a client in
+    # the wrong region fails with a misleading "No endpoint or agent found
+    # with qualifier 'DEFAULT'" error.
+    parts = arn.split(":")
+    return parts[3] if len(parts) > 3 and parts[3] else "us-east-1"
+
+
+def iter_sse_events(stream):
+    """Parse the SSE byte stream into (event, data) pairs."""
+    event, data_lines = None, []
+    for raw in stream.iter_lines():
+        line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        if line == "":
+            if event is not None or data_lines:
+                data = "\n".join(data_lines)
+                try:
+                    data = json.loads(data)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                yield (event or "message", data)
+                event, data_lines = None, []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].removeprefix(" "))
+    if event is not None or data_lines:
+        data = "\n".join(data_lines)
+        try:
+            data = json.loads(data)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        yield (event or "message", data)
+
+
+def render_cc(obj: dict, rel: str) -> None:
+    kind = obj.get("type")
+    if kind == "system" and obj.get("subtype") == "init":
+        print(f"{DIM}[{rel}s] init         model={obj.get('model', '?')}{RESET}")
+    elif kind == "assistant":
+        for block in (obj.get("message") or {}).get("content") or []:
+            if block.get("type") == "text" and block.get("text", "").strip():
+                print(f"[{rel}s] {block['text'].strip()}")
+            elif block.get("type") == "tool_use":
+                print(f"{YELLOW}[{rel}s] tool_use     {block.get('name')}{RESET}")
+    elif kind == "user":
+        for block in (obj.get("message") or {}).get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                content = block.get("content")
+                text = content if isinstance(content, str) else json.dumps(content)
+                print(f"{DIM}[{rel}s] tool_result  {text[:160].replace(chr(10), ' ')}{RESET}")
+    elif kind == "result":
+        print(
+            f"{DIM}[{rel}s] result       turns={obj.get('num_turns')} "
+            f"cost=${obj.get('total_cost_usd')}{RESET}"
+        )
+
+
+def send(client, runtime_arn: str, session_id: str, prompt: str) -> int:
+    print(f"\n{BOLD}{CYAN}> {prompt}{RESET}")
+    started = time.time()
+    exit_code = 0
+
+    resp = client.invoke_agent_runtime(
+        agentRuntimeArn=runtime_arn,
+        runtimeSessionId=session_id,
+        contentType="application/json",
+        accept="text/event-stream",
+        payload=json.dumps({"prompt": prompt}).encode(),
+    )
+
+    for event, data in iter_sse_events(resp["response"]):
+        rel = f"{time.time() - started:.2f}"
+        if event == "start" and isinstance(data, dict):
+            resumed = data.get("resumed_cc_session_id")
+            tag = f"resumed {resumed[:8]}" if resumed else "fresh session"
+            print(f"{DIM}[{rel}s] start        {tag}{RESET}")
+        elif event == "cc" and isinstance(data, dict):
+            render_cc(data, rel)
+        elif event == "error":
+            print(f"{RED}[{rel}s] error        {json.dumps(data)}{RESET}", file=sys.stderr)
+            exit_code = 1
+        elif event == "done" and isinstance(data, dict):
+            if data.get("exit_code") not in (0, None):
+                exit_code = 1
+            print(f"{DIM}— done in {time.time() - started:.2f}s —{RESET}")
+    return exit_code
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="ccr", description="Claude Code Remote — AgentCore client"
+    )
+    parser.add_argument("prompts", nargs="*", help="prompts to run; empty = REPL")
+    parser.add_argument("--runtime", help="AgentCore runtime ARN")
+    parser.add_argument("--region", help="AWS region (default: parsed from ARN)")
+    parser.add_argument(
+        "--new-session", action="store_true", help="start a fresh conversation"
+    )
+    args = parser.parse_args()
+
+    runtime_arn = resolve_runtime_arn(args.runtime)
+    session_id = resolve_session_id(args.new_session)
+    region = args.region or region_from_arn(runtime_arn)
+    client = boto3.client("bedrock-agentcore", region_name=region)
+
+    print(f"{DIM}runtime: {runtime_arn}{RESET}")
+    print(f"{DIM}session: {session_id}{RESET}")
+
+    exit_code = 0
+    if args.prompts:
+        for prompt in args.prompts:
+            exit_code |= send(client, runtime_arn, session_id, prompt)
+        sys.exit(exit_code)
+
+    print(f"{DIM}REPL — blank line to exit.{RESET}")
+    while True:
+        try:
+            prompt = input(f"\n{BOLD}> {RESET}").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not prompt:
+            break
+        try:
+            send(client, runtime_arn, session_id, prompt)
+        except Exception as e:  # keep the REPL alive on transient errors
+            print(f"{RED}error: {e}{RESET}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

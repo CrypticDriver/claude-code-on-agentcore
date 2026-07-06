@@ -1,0 +1,11 @@
+# Deploy artifacts (contain account-specific ARNs)
+.runtime_arn
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor noise
+.DS_Store
+.vscode/
+.idea/
