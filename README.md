@@ -87,14 +87,16 @@ Puts `ccr` on your PATH and — if step 1 ran in the same checkout — configure
 ### 3. Talk to it
 
 ```bash
-ccr "Write a fibonacci function in Python and save it to fib.py"
+ccr                          # interactive session — just type prompts
+```
 
-# Multi-turn — separate shell commands share one conversation
+The very first turn cold-starts a sandbox microVM and initializes Claude Code, so expect ~30 s; later turns take a few seconds. One-off prompts work too, and separate shell commands share one conversation:
+
+```bash
+ccr "Write a fibonacci function in Python and save it to fib.py"
 ccr "My name is Ada."
 ccr "What's my name?"        # → "Ada" (transcript resumed inside the sandbox)
-
-ccr --new-session "Start over."
-ccr                          # interactive REPL
+ccr --new-session            # start a fresh conversation
 ```
 
 ## Optional: managed web search (AgentCore Gateway)

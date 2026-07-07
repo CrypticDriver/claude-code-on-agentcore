@@ -87,14 +87,16 @@ BUILD=local ./deploy/deploy.sh    # 从 runtime/ 自行构建镜像（需要 Doc
 ### 3. 开始对话
 
 ```bash
-ccr "写一个 Python 的 fibonacci 函数，保存到 fib.py"
+ccr                          # 交互式会话 —— 直接输入即可连续对话
+```
 
-# 多轮对话 —— 不同的 shell 命令共享同一个会话
+首轮会冷启动沙箱 microVM 并初始化 Claude Code，约需 30 秒；之后每轮只要几秒。也支持一次性提示词，且不同的 shell 命令共享同一个会话：
+
+```bash
+ccr "写一个 Python 的 fibonacci 函数，保存到 fib.py"
 ccr "我叫 Ada。"
 ccr "我叫什么名字？"          # → "Ada"（沙箱内对话记录已恢复）
-
-ccr --new-session "重新开始。"
-ccr                          # 交互式 REPL
+ccr --new-session            # 开启新会话
 ```
 
 ## 可选：托管 Web 搜索（AgentCore Gateway）

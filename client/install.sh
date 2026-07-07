@@ -46,10 +46,11 @@ if [ -f ../.runtime_arn ]; then
   echo "    $(cat "$HOME/.ccr/runtime.arn")"
   echo
   echo "Next:"
-  echo "  ccr \"Say hello\""
+  echo "  ccr                  # interactive session"
+  echo "  ccr \"Say hello\"      # or one-off prompts"
 else
   echo
   echo "Next:"
   echo "  export CC_AGENTCORE_RUNTIME_ARN=<your runtime ARN>   # or: echo <arn> > ~/.ccr/runtime.arn"
-  echo "  ccr \"Say hello\""
+  echo "  ccr                  # interactive session"
 fi
