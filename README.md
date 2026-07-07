@@ -1,5 +1,7 @@
 # Claude Code on Amazon Bedrock AgentCore
 
+English | [简体中文](README.zh-CN.md)
+
 Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) **entirely inside an AWS-managed sandbox** — Amazon Bedrock AgentCore Runtime — and talk to it from a thin local CLI. Nothing executes on, or is collected from, the local machine.
 
 **Why you might want this:**
