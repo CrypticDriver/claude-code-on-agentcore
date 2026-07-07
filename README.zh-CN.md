@@ -50,9 +50,16 @@
 
 映射表存在**磁盘**（会话存储）而不是内存 —— 内存里的映射会随 microVM 一起销毁，拿不到 Claude Code session id，`--resume` 就无从谈起。
 
-## 快速开始
+## 快速开始（Quick Start）
 
-前置条件：AWS CLI v2、Docker（含 buildx）、Python 3.10+ 和 boto3 ≥ 1.39。凭证需具备 ECR、IAM 角色创建和 `bedrock-agentcore-control` 权限，账号需开通 Claude 的 [Bedrock 模型访问](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)。
+三步：部署、安装、对话。
+
+**前置条件：** AWS CLI v2（已配置凭证）、Docker（含 buildx）、Python 3.10+ 和 boto3 ≥ 1.39。凭证需具备 ECR、IAM 角色创建和 `bedrock-agentcore-control` 权限，账号需开通 Claude 的 [Bedrock 模型访问](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)。
+
+```bash
+git clone https://github.com/CrypticDriver/claude-code-on-agentcore.git
+cd claude-code-on-agentcore
+```
 
 ### 1. 部署运行时（一条命令）
 
@@ -72,8 +79,9 @@ REGION=us-west-2 MODEL=us.anthropic.claude-opus-4-7 ./deploy/deploy.sh
 
 ```bash
 ./client/install.sh
-export CC_AGENTCORE_RUNTIME_ARN=$(cat .runtime_arn)
 ```
+
+`ccr` 装入 PATH；若第 1 步在同一 checkout 里跑过，运行时 ARN 会自动配置。在另一台机器上使用时手动设置：`export CC_AGENTCORE_RUNTIME_ARN=<arn>`。
 
 ### 3. 开始对话
 

@@ -50,9 +50,16 @@ client sends stable runtimeSessionId (persisted in ~/.ccr/session.id)
 
 The map lives **on disk** (session storage), not in memory — an in-memory map dies with the microVM, and without the Claude Code session id there is nothing to `--resume`.
 
-## Quickstart
+## Quick Start
 
-Prerequisites: AWS CLI v2, Docker (with buildx), Python 3.10+ with boto3 ≥ 1.39. Your credentials need ECR, IAM role creation, and `bedrock-agentcore-control` permissions, and the account needs [Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) for Claude.
+Three commands: deploy, install, talk.
+
+**Prerequisites:** AWS CLI v2 (with credentials configured), Docker (with buildx), Python 3.10+ with boto3 ≥ 1.39. Your credentials need ECR, IAM role creation, and `bedrock-agentcore-control` permissions, and the account needs [Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) for Claude.
+
+```bash
+git clone https://github.com/CrypticDriver/claude-code-on-agentcore.git
+cd claude-code-on-agentcore
+```
 
 ### 1. Deploy the runtime (one command)
 
@@ -72,8 +79,9 @@ REGION=us-west-2 MODEL=us.anthropic.claude-opus-4-7 ./deploy/deploy.sh
 
 ```bash
 ./client/install.sh
-export CC_AGENTCORE_RUNTIME_ARN=$(cat .runtime_arn)
 ```
+
+Puts `ccr` on your PATH and — if step 1 ran in the same checkout — configures the runtime ARN automatically. On another machine, set it manually: `export CC_AGENTCORE_RUNTIME_ARN=<arn>`.
 
 ### 3. Talk to it
 

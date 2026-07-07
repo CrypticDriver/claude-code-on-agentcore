@@ -38,7 +38,18 @@ case ":${PATH}:" in
      echo "    export PATH=\"${BIN_DIR}:\$PATH\"" ;;
 esac
 
-echo
-echo "Next:"
-echo "  export CC_AGENTCORE_RUNTIME_ARN=<your runtime ARN>   # or: echo <arn> > ~/.ccr/runtime.arn"
-echo "  ccr \"Say hello\""
+# If deploy.sh already ran in this checkout, wire the runtime ARN automatically.
+if [ -f ../.runtime_arn ]; then
+  mkdir -p "$HOME/.ccr"
+  cp ../.runtime_arn "$HOME/.ccr/runtime.arn"
+  echo "==> runtime ARN configured from .runtime_arn:"
+  echo "    $(cat "$HOME/.ccr/runtime.arn")"
+  echo
+  echo "Next:"
+  echo "  ccr \"Say hello\""
+else
+  echo
+  echo "Next:"
+  echo "  export CC_AGENTCORE_RUNTIME_ARN=<your runtime ARN>   # or: echo <arn> > ~/.ccr/runtime.arn"
+  echo "  ccr \"Say hello\""
+fi
