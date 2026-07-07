@@ -31,6 +31,9 @@ import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tlsctx import SSL_CONTEXT
+
 REGION = os.environ.get("REGION", "us-east-1")
 GATEWAY_NAME = os.environ.get("GATEWAY_NAME", "claude-code-web-search")
 ROLE_NAME = os.environ.get("GATEWAY_ROLE_NAME", "AgentCoreGatewayWebSearchRole")
@@ -120,7 +123,7 @@ def rest_call(method: str, path: str, body: dict | None = None) -> dict:
               "bedrock-agentcore", REGION).add_auth(req)
     http_req = urllib.request.Request(
         url, data=data.encode() if data else None, headers=dict(req.headers), method=method)
-    with urllib.request.urlopen(http_req) as resp:
+    with urllib.request.urlopen(http_req, context=SSL_CONTEXT) as resp:
         return json.loads(resp.read())
 
 

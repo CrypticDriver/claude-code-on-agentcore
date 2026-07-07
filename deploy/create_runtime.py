@@ -24,6 +24,9 @@ import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tlsctx import SSL_CONTEXT
+
 REPO_ROOT = Path(__file__).parent.parent
 REGION = os.environ["REGION"]
 NAME = os.environ["RUNTIME_NAME"]
@@ -63,7 +66,7 @@ def rest_put(path: str, body: dict) -> dict:
               "bedrock-agentcore", REGION).add_auth(req)
     http_req = urllib.request.Request(url, data=data.encode(),
                                       headers=dict(req.headers), method="PUT")
-    with urllib.request.urlopen(http_req) as resp:
+    with urllib.request.urlopen(http_req, context=SSL_CONTEXT) as resp:
         return json.loads(resp.read())
 
 

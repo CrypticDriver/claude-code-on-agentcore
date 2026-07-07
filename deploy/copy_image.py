@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import json
 import os
-import ssl
 import sys
 import urllib.error
 import urllib.request
 
 import boto3
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tlsctx import SSL_CONTEXT
 
 SOURCE_IMAGE = os.environ["SOURCE_IMAGE"]
 REGION = os.environ["REGION"]
@@ -37,28 +39,6 @@ MANIFEST_TYPES = ", ".join([
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.oci.image.index.v1+json",
 ])
-
-
-def make_ssl_context() -> ssl.SSLContext:
-    """python.org builds of Python on macOS ship without CA certs wired up;
-    fall back to certifi's bundle or the one botocore ships (boto3 is a hard
-    prerequisite, so at least one of these is always available)."""
-    ctx = ssl.create_default_context()
-    if ctx.cert_store_stats()["x509_ca"] > 0:
-        return ctx
-    try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
-        pass
-    import botocore
-    bundle = os.path.join(os.path.dirname(botocore.__file__), "cacert.pem")
-    if os.path.exists(bundle):
-        return ssl.create_default_context(cafile=bundle)
-    return ctx
-
-
-SSL_CONTEXT = make_ssl_context()
 
 
 def http(url: str, method: str = "GET", headers: dict | None = None,
