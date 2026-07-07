@@ -15,9 +15,9 @@ Inputs via environment:
 """
 from __future__ import annotations
 
-import base64
 import json
 import os
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -39,10 +39,32 @@ MANIFEST_TYPES = ", ".join([
 ])
 
 
+def make_ssl_context() -> ssl.SSLContext:
+    """python.org builds of Python on macOS ship without CA certs wired up;
+    fall back to certifi's bundle or the one botocore ships (boto3 is a hard
+    prerequisite, so at least one of these is always available)."""
+    ctx = ssl.create_default_context()
+    if ctx.cert_store_stats()["x509_ca"] > 0:
+        return ctx
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+    import botocore
+    bundle = os.path.join(os.path.dirname(botocore.__file__), "cacert.pem")
+    if os.path.exists(bundle):
+        return ssl.create_default_context(cafile=bundle)
+    return ctx
+
+
+SSL_CONTEXT = make_ssl_context()
+
+
 def http(url: str, method: str = "GET", headers: dict | None = None,
          data=None, stream: bool = False):
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
-    resp = urllib.request.urlopen(req)
+    resp = urllib.request.urlopen(req, context=SSL_CONTEXT)
     return resp if stream else (resp.status, dict(resp.headers), resp.read())
 
 
