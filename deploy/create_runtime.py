@@ -46,6 +46,30 @@ ENV_VARS = {
 if os.environ.get("GATEWAY_MCP_URL"):
     ENV_VARS["GATEWAY_MCP_URL"] = os.environ["GATEWAY_MCP_URL"]
 
+TTY = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+GREEN, DIM, RESET = ("\033[32m", "\033[2m", "\033[0m") if TTY else ("", "", "")
+
+
+def ok(msg: str) -> None:
+    print(f"  {GREEN}✓{RESET} {msg}")
+
+
+def note(msg: str) -> None:
+    print(f"    {msg}")
+
+
+def status_line(msg: str) -> None:
+    if TTY:
+        print(f"\r\033[2K    {msg}", end="", flush=True)
+    else:
+        print(f"    {msg}")
+
+
+def status_done() -> None:
+    if TTY:
+        print("\r\033[2K", end="", flush=True)
+
+
 session = boto3.Session()
 ctl = session.client("bedrock-agentcore-control", region_name=REGION)
 
@@ -90,17 +114,17 @@ def deploy() -> str:
     existing = find_existing()
     use_sdk = sdk_supports_session_storage()
     if not use_sdk:
-        print("==> NOTE: this boto3 predates filesystemConfigurations; "
-              "using a SigV4 REST call instead (consider: pip install -U boto3)")
+        note(f"{DIM}this boto3 predates filesystemConfigurations; using a "
+             f"SigV4 REST call instead (consider: pip install -U boto3){RESET}")
     if existing:
-        print(f"==> updating runtime {existing}")
-        print("    NOTE: a runtime version update wipes managed session storage.")
+        note(f"updating existing runtime {existing}")
+        note(f"{DIM}note: a runtime version update wipes managed session storage{RESET}")
         if use_sdk:
             ctl.update_agent_runtime(agentRuntimeId=existing, **kwargs)
         else:
             rest_put(f"/runtimes/{existing}/", kwargs)
         return existing
-    print("==> creating runtime")
+    note("creating runtime...")
     if use_sdk:
         resp = ctl.create_agent_runtime(agentRuntimeName=NAME, **kwargs)
     else:
@@ -109,27 +133,24 @@ def deploy() -> str:
 
 
 def main() -> None:
-    print(f"==> region: {REGION}  name: {NAME}")
-    print(f"==> image:  {IMAGE}")
-    print(f"==> env:    {json.dumps(ENV_VARS)}")
-
     runtime_id = deploy()
 
-    print("==> waiting for READY", flush=True)
-    for _ in range(60):
+    for i in range(60):
         rt = ctl.get_agent_runtime(agentRuntimeId=runtime_id)
         status = rt["status"]
         if status == "READY":
+            status_done()
             arn = rt["agentRuntimeArn"]
             (REPO_ROOT / ".runtime_arn").write_text(arn + "\n")
-            print(f"==> READY: {arn}")
-            print(f"==> session storage: {json.dumps(rt.get('filesystemConfigurations'))}")
+            ok(f"runtime READY {DIM}(session storage mounted at /mnt/agent-state){RESET}")
             return
         if status.endswith("_FAILED"):
+            status_done()
             print(json.dumps(rt, default=str, indent=2), file=sys.stderr)
             sys.exit(1)
-        print(f"    status={status}")
+        status_line(f"waiting for READY... {DIM}(status={status}, {i * 5}s){RESET}")
         time.sleep(5)
+    status_done()
     print("timeout waiting for READY", file=sys.stderr)
     sys.exit(1)
 

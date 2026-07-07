@@ -30,20 +30,35 @@ MODEL="${MODEL:-us.anthropic.claude-sonnet-4-6}"
 GATEWAY_MCP_URL="${GATEWAY_MCP_URL:-}"
 BUILD="${BUILD:-prebuilt}"
 SOURCE_IMAGE="${SOURCE_IMAGE:-public.ecr.aws/f5f0l0w1/claude-code-agentcore:latest}"
+ROLE_NAME="${ROLE_NAME:-AgentCoreClaudeCodeRuntimeRole}"
+
+# --- output helpers -----------------------------------------------------------
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; GREEN=$'\033[32m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
+else
+  BOLD=''; DIM=''; GREEN=''; CYAN=''; RESET=''
+fi
+step() { printf '\n%s %s\n' "${CYAN}${BOLD}[$1/3]${RESET}" "${BOLD}$2${RESET}"; }
+ok()   { printf '  %s %s\n' "${GREEN}✓${RESET}" "$1"; }
+note() { printf '    %s\n' "$1"; }
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 IMAGE="${REGISTRY}/${REPO}:${TAG}"
-ROLE_NAME="${ROLE_NAME:-AgentCoreClaudeCodeRuntimeRole}"
 
-echo "==> region:  ${REGION}"
-echo "==> image:   ${IMAGE}"
-echo "==> model:   ${MODEL}"
-echo "==> runtime: ${RUNTIME_NAME}"
+printf '%s\n' "${BOLD}Claude Code on AgentCore${RESET}"
+printf '  %-8s %s\n' "region"  "${REGION}"
+printf '  %-8s %s\n' "model"   "${MODEL}"
+printf '  %-8s %s\n' "runtime" "${RUNTIME_NAME}"
+if [ "${BUILD}" = "local" ]; then
+  printf '  %-8s %s\n' "image" "built locally from runtime/"
+else
+  printf '  %-8s %s%s%s\n' "image" "prebuilt ${DIM}" "${SOURCE_IMAGE}" "${RESET}"
+fi
 
-# --- 1. IAM execution role (idempotent) -------------------------------------
+# --- 1. IAM execution role (idempotent) ---------------------------------------
+step 1 "IAM execution role"
 if ! aws iam get-role --role-name "${ROLE_NAME}" >/dev/null 2>&1; then
-  echo "==> creating IAM role ${ROLE_NAME}"
   aws iam create-role --role-name "${ROLE_NAME}" \
     --assume-role-policy-document '{
       "Version": "2012-10-17",
@@ -90,16 +105,16 @@ if ! aws iam get-role --role-name "${ROLE_NAME}" >/dev/null 2>&1; then
         }
       ]
     }" >/dev/null
-  echo "==> waiting for role propagation"
+  note "waiting for role propagation..."
   sleep 10
+  ok "created ${ROLE_NAME}"
 else
-  echo "==> IAM role ${ROLE_NAME} exists"
+  ok "${ROLE_NAME} ${DIM}(already exists)${RESET}"
 fi
 ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
 
 # Optional: let the runtime call the Gateway MCP endpoint (web search).
 if [ -n "${GATEWAY_MCP_URL}" ]; then
-  echo "==> granting InvokeGateway to ${ROLE_NAME}"
   aws iam put-role-policy --role-name "${ROLE_NAME}" \
     --policy-name gateway-invoke \
     --policy-document "{
@@ -110,38 +125,40 @@ if [ -n "${GATEWAY_MCP_URL}" ]; then
         \"Resource\": \"arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:gateway/*\"
       }]
     }" >/dev/null
+  ok "granted InvokeGateway ${DIM}(Gateway web search)${RESET}"
 fi
 
-# --- 2. ECR repo + ARM64 image ----------------------------------------------
+# --- 2. Container image --------------------------------------------------------
+step 2 "Container image"
 aws ecr describe-repositories --repository-names "${REPO}" --region "${REGION}" >/dev/null 2>&1 \
   || aws ecr create-repository --repository-name "${REPO}" --region "${REGION}" \
        --image-scanning-configuration scanOnPush=true >/dev/null
 
 if [ "${BUILD}" = "local" ]; then
-  echo "==> ecr login"
   aws ecr get-login-password --region "${REGION}" \
     | docker login --username AWS --password-stdin "${REGISTRY}" >/dev/null
-
-  echo "==> building linux/arm64 image (first build takes a few minutes)"
+  note "building linux/arm64 image (first build takes a few minutes)..."
   docker buildx build \
     --platform linux/arm64 \
     --provenance=false \
     --tag "${IMAGE}" \
     --push \
     runtime/
+  ok "built and pushed ${IMAGE}"
 else
-  echo "==> copying prebuilt image into your ECR (no Docker needed)"
   SOURCE_IMAGE="${SOURCE_IMAGE}" REGION="${REGION}" REPO="${REPO}" TAG="${TAG}" \
   python3 deploy/copy_image.py
 fi
 
-# --- 3. AgentCore Runtime (boto3 — needs filesystemConfigurations) -----------
-echo "==> creating/updating AgentCore runtime"
+# --- 3. AgentCore Runtime ------------------------------------------------------
+step 3 "AgentCore Runtime"
 REGION="${REGION}" RUNTIME_NAME="${RUNTIME_NAME}" IMAGE="${IMAGE}" \
 ROLE_ARN="${ROLE_ARN}" MODEL="${MODEL}" GATEWAY_MCP_URL="${GATEWAY_MCP_URL}" \
 python3 deploy/create_runtime.py
 
-echo
-echo "==> Done. Configure the client:"
-echo "    export CC_AGENTCORE_RUNTIME_ARN=\$(cat .runtime_arn)"
-echo "    ./client/bin/ccr \"Say hello\""
+ARN="$(cat .runtime_arn)"
+printf '\n%s %s\n' "${GREEN}${BOLD}✓ Deployed${RESET}" "${DIM}in $((SECONDS / 60))m $((SECONDS % 60))s${RESET}"
+printf '  %s\n' "${ARN}"
+printf '\n%s\n' "${BOLD}Next${RESET}"
+printf '  %s   %s\n' './client/install.sh' "${DIM}# installs the ccr client and wires up this runtime${RESET}"
+printf '  %s\n\n' 'ccr "Say hello"'

@@ -33,6 +33,29 @@ TAG = os.environ.get("TAG", "latest")
 
 CHUNK = 8 * 1024 * 1024
 
+TTY = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+GREEN, DIM, RESET = ("\033[32m", "\033[2m", "\033[0m") if TTY else ("", "", "")
+
+
+def ok(msg: str) -> None:
+    print(f"  {GREEN}✓{RESET} {msg}")
+
+
+def progress(msg: str) -> None:
+    if TTY:
+        print(f"\r\033[2K    {msg}", end="", flush=True)
+    else:
+        print(f"    {msg}")
+
+
+def progress_done() -> None:
+    if TTY:
+        print("\r\033[2K", end="", flush=True)
+
+
+def fmt_size(n: int) -> str:
+    return f"{n / 1e6:.0f} MB" if n >= 1e6 else f"{n / 1e3:.0f} kB"
+
 MANIFEST_TYPES = ", ".join([
     "application/vnd.docker.distribution.manifest.v2+json",
     "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -99,11 +122,12 @@ def dst_blob_exists(digest: str) -> bool:
         raise
 
 
-def copy_blob(digest: str, size: int) -> None:
+def copy_blob(digest: str, size: int, index: int, total: int) -> None:
+    label = f"layer {index}/{total} ({fmt_size(size)})"
     if dst_blob_exists(digest):
-        print(f"    blob {digest[:19]}… exists ({size} bytes)")
+        progress(f"{label} already present, skipping")
         return
-    print(f"    blob {digest[:19]}… copying ({size} bytes)")
+    progress(f"{label} copying...")
     src = http(f"https://{SRC_HOST}/v2/{SRC_REPO}/blobs/{digest}",
                headers=src_headers(accept="*/*"), stream=True)
 
@@ -129,6 +153,8 @@ def copy_blob(digest: str, size: int) -> None:
         if location.startswith("/"):
             location = f"https://{DST_HOST}{location}"
         offset += len(chunk)
+        if size:
+            progress(f"{label} copying... {min(100, offset * 100 // size)}%")
 
     sep = "&" if "?" in location else "?"
     http(f"{location}{sep}digest={digest}", method="PUT",
@@ -142,14 +168,15 @@ def put_manifest(reference: str, media_type: str, body: bytes) -> None:
 
 def copy_image_manifest(manifest: dict, media_type: str, raw: bytes, reference: str) -> None:
     blobs = [manifest["config"]] + manifest["layers"]
-    for blob in blobs:
-        copy_blob(blob["digest"], blob.get("size", 0))
+    total = len(blobs)
+    for i, blob in enumerate(blobs, 1):
+        copy_blob(blob["digest"], blob.get("size", 0), i, total)
+    progress_done()
     put_manifest(reference, media_type, raw)
 
 
 def main() -> None:
-    print(f"==> copy {SOURCE_IMAGE}")
-    print(f"    ->  {DST_HOST}/{REPO}:{TAG}")
+    print(f"    copying prebuilt image into your ECR {DIM}(no Docker needed){RESET}")
 
     manifest, media_type, raw = src_manifest(SRC_TAG)
 
@@ -166,7 +193,7 @@ def main() -> None:
     else:
         copy_image_manifest(manifest, media_type, raw, TAG)
 
-    print(f"==> done: {DST_HOST}/{REPO}:{TAG}")
+    ok(f"image ready: {DST_HOST}/{REPO}:{TAG}")
 
 
 if __name__ == "__main__":
