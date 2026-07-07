@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Create or update the AgentCore Runtime via boto3.
+Create or update the AgentCore Runtime.
 
 boto3 is required (not the aws CLI): older AWS CLI builds silently drop
 `--filesystem-configurations`, leaving the runtime without session storage
-and breaking multi-turn persistence.
+and breaking multi-turn persistence. Older boto3 releases don't know the
+parameter either — in that case the create/update call is sent as a raw
+SigV4-signed REST request instead, so any boto3 works.
 
 Inputs via environment: REGION, RUNTIME_NAME, IMAGE, ROLE_ARN, MODEL.
 Writes the runtime ARN to .runtime_arn in the repo root.
@@ -15,9 +17,12 @@ import json
 import os
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 import boto3
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 
 REPO_ROOT = Path(__file__).parent.parent
 REGION = os.environ["REGION"]
@@ -38,7 +43,28 @@ ENV_VARS = {
 if os.environ.get("GATEWAY_MCP_URL"):
     ENV_VARS["GATEWAY_MCP_URL"] = os.environ["GATEWAY_MCP_URL"]
 
-ctl = boto3.client("bedrock-agentcore-control", region_name=REGION)
+session = boto3.Session()
+ctl = session.client("bedrock-agentcore-control", region_name=REGION)
+
+
+def sdk_supports_session_storage() -> bool:
+    shape = ctl.meta.service_model.operation_model("CreateAgentRuntime").input_shape
+    return "filesystemConfigurations" in shape.members
+
+
+def rest_put(path: str, body: dict) -> dict:
+    """Raw SigV4 fallback for boto3 releases without filesystemConfigurations."""
+    host = f"bedrock-agentcore-control.{REGION}.amazonaws.com"
+    url = f"https://{host}{path}"
+    data = json.dumps(body)
+    req = AWSRequest(method="PUT", url=url, data=data,
+                     headers={"Content-Type": "application/json", "Host": host})
+    SigV4Auth(session.get_credentials().get_frozen_credentials(),
+              "bedrock-agentcore", REGION).add_auth(req)
+    http_req = urllib.request.Request(url, data=data.encode(),
+                                      headers=dict(req.headers), method="PUT")
+    with urllib.request.urlopen(http_req) as resp:
+        return json.loads(resp.read())
 
 
 def find_existing() -> str | None:
@@ -59,13 +85,23 @@ def deploy() -> str:
         filesystemConfigurations=FS_CONFIGS,
     )
     existing = find_existing()
+    use_sdk = sdk_supports_session_storage()
+    if not use_sdk:
+        print("==> NOTE: this boto3 predates filesystemConfigurations; "
+              "using a SigV4 REST call instead (consider: pip install -U boto3)")
     if existing:
         print(f"==> updating runtime {existing}")
         print("    NOTE: a runtime version update wipes managed session storage.")
-        ctl.update_agent_runtime(agentRuntimeId=existing, **kwargs)
+        if use_sdk:
+            ctl.update_agent_runtime(agentRuntimeId=existing, **kwargs)
+        else:
+            rest_put(f"/runtimes/{existing}/", kwargs)
         return existing
     print("==> creating runtime")
-    resp = ctl.create_agent_runtime(agentRuntimeName=NAME, **kwargs)
+    if use_sdk:
+        resp = ctl.create_agent_runtime(agentRuntimeName=NAME, **kwargs)
+    else:
+        resp = rest_put("/runtimes/", {"agentRuntimeName": NAME, **kwargs})
     return resp["agentRuntimeId"]
 
 
