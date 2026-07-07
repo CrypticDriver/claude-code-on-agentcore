@@ -24,6 +24,24 @@ const { spawn } = require('node:child_process');
 const PORT = 8080;
 const HOST = '0.0.0.0';
 
+// Optional: expose an AgentCore Gateway (e.g. the managed web-search tool) to
+// Claude Code as an MCP server. The stdio<->HTTP bridge signs with the
+// runtime's IAM role — see mcp-gateway-bridge.js.
+const GATEWAY_MCP_URL = process.env.GATEWAY_MCP_URL || '';
+const MCP_CONFIG_FILE = '/tmp/mcp-gateway.json';
+
+let mcpConfigPrepared = false;
+function prepareMcpConfigOnce() {
+  if (mcpConfigPrepared || !GATEWAY_MCP_URL) return;
+  fs.writeFileSync(MCP_CONFIG_FILE, JSON.stringify({
+    mcpServers: {
+      gateway: { command: 'node', args: ['/app/mcp-gateway-bridge.js'] },
+    },
+  }));
+  mcpConfigPrepared = true;
+  console.log('[mcp] gateway bridge enabled:', GATEWAY_MCP_URL);
+}
+
 // AgentCore allows at most ONE managed sessionStorage mount per runtime.
 // Everything that must persist lives under a single /mnt/agent-state mount.
 const HOME_DIR = '/mnt/agent-state';
@@ -95,16 +113,21 @@ function runClaudeStream({ prompt, resumeCcSessionId, res, onCcSessionId, onExit
     '--output-format', 'stream-json',
     '--verbose',
   ];
+  if (GATEWAY_MCP_URL) {
+    // --mcp-config is variadic; the prompt goes via stdin so it is never
+    // swallowed as an extra config path.
+    args.push('--mcp-config', MCP_CONFIG_FILE);
+  }
   if (resumeCcSessionId) {
     args.push('--resume', resumeCcSessionId);
   }
-  args.push(prompt);
 
   const child = spawn('claude', args, {
     cwd: WORK_DIR,
     env: { ...process.env, HOME: HOME_DIR },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
+  child.stdin.end(prompt);
 
   let stdoutBuf = '';
   let stderrBuf = '';
@@ -183,6 +206,7 @@ const server = http.createServer(async (req, res) => {
       const forceReset = body.reset === true;
 
       prepareMountsOnce();
+      prepareMcpConfigOnce();
       const sessionMap = getSessionMap();
 
       let resumeCcSessionId = null;

@@ -34,6 +34,9 @@ ENV_VARS = {
     "AWS_REGION": REGION,
     "ANTHROPIC_MODEL": MODEL,
 }
+# Optional: AgentCore Gateway MCP endpoint (see deploy/setup_web_search.py).
+if os.environ.get("GATEWAY_MCP_URL"):
+    ENV_VARS["GATEWAY_MCP_URL"] = os.environ["GATEWAY_MCP_URL"]
 
 ctl = boto3.client("bedrock-agentcore-control", region_name=REGION)
 

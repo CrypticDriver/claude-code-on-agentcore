@@ -6,6 +6,8 @@
 #   ./deploy/deploy.sh                      # defaults (us-east-1, Sonnet)
 #   REGION=us-west-2 ./deploy/deploy.sh
 #   MODEL=us.anthropic.claude-opus-4-7 ./deploy/deploy.sh
+#   GATEWAY_MCP_URL=https://...  ./deploy/deploy.sh   # optional: Gateway web search
+#                                                     # (create it first with deploy/setup_web_search.py)
 #
 # Requirements: aws CLI v2, docker (with buildx), python3 + boto3 >= 1.39.
 # The caller's AWS credentials need permissions for ECR, IAM (role create),
@@ -19,6 +21,7 @@ RUNTIME_NAME="${RUNTIME_NAME:-claude_code_runtime}"
 REPO="${REPO:-claude-code-agentcore}"
 TAG="${TAG:-latest}"
 MODEL="${MODEL:-us.anthropic.claude-sonnet-4-6}"
+GATEWAY_MCP_URL="${GATEWAY_MCP_URL:-}"
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
@@ -86,6 +89,21 @@ else
 fi
 ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
 
+# Optional: let the runtime call the Gateway MCP endpoint (web search).
+if [ -n "${GATEWAY_MCP_URL}" ]; then
+  echo "==> granting InvokeGateway to ${ROLE_NAME}"
+  aws iam put-role-policy --role-name "${ROLE_NAME}" \
+    --policy-name gateway-invoke \
+    --policy-document "{
+      \"Version\": \"2012-10-17\",
+      \"Statement\": [{
+        \"Effect\": \"Allow\",
+        \"Action\": \"bedrock-agentcore:InvokeGateway\",
+        \"Resource\": \"arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:gateway/*\"
+      }]
+    }" >/dev/null
+fi
+
 # --- 2. ECR repo + ARM64 image ----------------------------------------------
 aws ecr describe-repositories --repository-names "${REPO}" --region "${REGION}" >/dev/null 2>&1 \
   || aws ecr create-repository --repository-name "${REPO}" --region "${REGION}" \
@@ -106,7 +124,7 @@ docker buildx build \
 # --- 3. AgentCore Runtime (boto3 — needs filesystemConfigurations) -----------
 echo "==> creating/updating AgentCore runtime"
 REGION="${REGION}" RUNTIME_NAME="${RUNTIME_NAME}" IMAGE="${IMAGE}" \
-ROLE_ARN="${ROLE_ARN}" MODEL="${MODEL}" \
+ROLE_ARN="${ROLE_ARN}" MODEL="${MODEL}" GATEWAY_MCP_URL="${GATEWAY_MCP_URL}" \
 python3 deploy/create_runtime.py
 
 echo

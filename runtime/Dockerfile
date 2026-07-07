@@ -13,7 +13,16 @@ RUN npm install -g @anthropic-ai/claude-code
 ENV CLAUDE_CODE_USE_BEDROCK=1 \
     CLAUDE_CODE_ENABLE_TELEMETRY=0
 
+# SigV4 signing deps for the optional Gateway MCP bridge.
+WORKDIR /app
+RUN npm install --omit=dev --no-audit --no-fund \
+      @aws-sdk/credential-provider-node \
+      @smithy/signature-v4 \
+      @smithy/protocol-http \
+      @aws-crypto/sha256-js
+
 COPY --chown=node:node server.js /app/server.js
+COPY --chown=node:node mcp-gateway-bridge.js /app/mcp-gateway-bridge.js
 COPY --chown=node:node entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 

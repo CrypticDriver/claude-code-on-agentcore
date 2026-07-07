@@ -11,6 +11,7 @@
 - **会话隔离** —— AgentCore 为每个会话分配独立 microVM，会话之间互不可见。
 - **对话持久化** —— 对话记录与工作区通过 AgentCore 托管会话存储（闲置保留 14 天）跨 microVM 销毁存活。今天问一半，明天接着问。
 - **按用量计费** —— 模型思考期间不计 CPU 费用。实测单次调用成本 **$0.016–0.04**（含 prompt 缓存）。
+- **可选托管 Web 搜索** —— 一条命令接入 [AgentCore Gateway web-search 工具](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html)：Amazon 自营搜索索引，端到端 SigV4，查询不出 AWS。
 
 ## 架构
 
@@ -87,6 +88,23 @@ ccr --new-session "重新开始。"
 ccr                          # 交互式 REPL
 ```
 
+## 可选：托管 Web 搜索（AgentCore Gateway）
+
+Claude Code 自带的 WebSearch 走 Anthropic 的搜索后端。若要求搜索查询不出 AWS，可以改接全托管的 [Gateway web-search 工具](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html) —— Amazon 自营索引，以 MCP 协议暴露，用运行时 IAM 角色调用：
+
+```bash
+python3 deploy/setup_web_search.py          # 创建 gateway + web-search target，打印 MCP URL
+GATEWAY_MCP_URL=<打印的 URL> ./deploy/deploy.sh   # 带上 gateway 重新部署
+```
+
+沙箱内由 `mcp-gateway-bridge.js` 把 Claude Code 的 stdio MCP 传输桥接到 Gateway 的 SigV4 认证 HTTP 端点。之后 Claude Code 就能看到 `mcp__gateway__web-search-tool___WebSearch` 工具（query + maxResults 1–25，结果含标题/URL/摘要/日期）。已端到端验证。
+
+注意事项：
+
+- web-search 连接器目前**仅 us-east-1 可用**。
+- **boto3 尚不认识 `connector` target 类型**（服务模型落后于 API）—— `create_gateway_target` 会直接参数校验失败。`setup_web_search.py` 用 SigV4 签名的原始 REST 调用绕过。
+- 更新运行时版本会**清空会话存储**（已有对话重置）—— 与任何镜像更新相同的注意事项。
+
 ## 实测性能
 
 在 us-east-1 用 Claude Opus 采集（5 个并发冷启动会话 + 热复用）：
@@ -122,8 +140,8 @@ ccr                          # 交互式 REPL
 
 | 路径 | 内容 |
 |---|---|
-| `runtime/` | 容器镜像：Dockerfile、entrypoint、SSE 桥接服务 |
-| `deploy/` | 一键部署：`deploy.sh`（IAM + ECR + 镜像）和 `create_runtime.py`（boto3） |
+| `runtime/` | 容器镜像：Dockerfile、entrypoint、SSE 桥接服务、Gateway MCP 桥 |
+| `deploy/` | 一键部署：`deploy.sh`（IAM + ECR + 镜像）、`create_runtime.py`（boto3）、`setup_web_search.py`（可选 Gateway Web 搜索） |
 | `client/` | `ccr` 命令行客户端及安装脚本 |
 
 ## 协议

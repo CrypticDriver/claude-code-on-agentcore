@@ -11,6 +11,7 @@ Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) **entirely ins
 - **Session isolation** — AgentCore gives every session a dedicated microVM. Sessions cannot see each other.
 - **Persistent conversations** — transcript and workspace survive microVM teardown via AgentCore managed session storage (14-day idle retention). Ask a question today, follow up tomorrow.
 - **Consumption billing** — CPU is not billed while the model is thinking. Measured cost: **$0.016–0.04 per invocation** (with prompt caching).
+- **Optional managed web search** — one command adds the [AgentCore Gateway web-search tool](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html): Amazon-operated search index, SigV4 all the way, queries never leave AWS.
 
 ## Architecture
 
@@ -87,6 +88,23 @@ ccr --new-session "Start over."
 ccr                          # interactive REPL
 ```
 
+## Optional: managed web search (AgentCore Gateway)
+
+Claude Code's built-in WebSearch calls out through Anthropic's search backend. If you want search queries to stay inside AWS, wire in the fully managed [Gateway web-search tool](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html) instead — an Amazon-operated index exposed over MCP, invoked with the runtime's IAM role:
+
+```bash
+python3 deploy/setup_web_search.py          # creates gateway + web-search target, prints the MCP URL
+GATEWAY_MCP_URL=<printed url> ./deploy/deploy.sh   # redeploy with the gateway wired in
+```
+
+Inside the sandbox, `mcp-gateway-bridge.js` bridges Claude Code's stdio MCP transport to the Gateway's SigV4-authenticated HTTP endpoint. Claude Code then sees an `mcp__gateway__web-search-tool___WebSearch` tool (query + maxResults 1–25, results with title/URL/snippet/date). Verified end to end.
+
+Notes:
+
+- The web-search connector is currently **us-east-1 only**.
+- **boto3 does not yet know the `connector` target type** (service model lags the API) — `create_gateway_target` fails parameter validation. `setup_web_search.py` works around this with a raw SigV4-signed REST call.
+- Redeploying the runtime version **wipes session storage** (existing conversations reset) — same caveat as any image update.
+
 ## Measured performance
 
 Collected against us-east-1 with Claude Opus (5 concurrent cold sessions, then warm re-invocations):
@@ -122,8 +140,8 @@ This repo is a working reference, not a finished enterprise product. Before broa
 
 | Path | What it is |
 |---|---|
-| `runtime/` | Container image: Dockerfile, entrypoint, and the SSE bridge server |
-| `deploy/` | One-click deploy: `deploy.sh` (IAM + ECR + image) and `create_runtime.py` (boto3) |
+| `runtime/` | Container image: Dockerfile, entrypoint, the SSE bridge server, and the Gateway MCP bridge |
+| `deploy/` | One-click deploy: `deploy.sh` (IAM + ECR + image), `create_runtime.py` (boto3), `setup_web_search.py` (optional Gateway web search) |
 | `client/` | `ccr` CLI and its installer |
 
 ## Protocol
