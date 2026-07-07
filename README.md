@@ -54,7 +54,7 @@ The map lives **on disk** (session storage), not in memory — an in-memory map 
 
 Three commands: deploy, install, talk.
 
-**Prerequisites:** AWS CLI v2 (with credentials configured), Docker (with buildx), Python 3.10+ with boto3 ≥ 1.39. Your credentials need ECR, IAM role creation, and `bedrock-agentcore-control` permissions, and the account needs [Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) for Claude.
+**Prerequisites:** AWS CLI v2 (with credentials configured) and Python 3.10+ with boto3 ≥ 1.39 — **no Docker needed**. Your credentials need ECR, IAM role creation, and `bedrock-agentcore-control` permissions, and the account needs [Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) for Claude.
 
 ```bash
 git clone https://github.com/CrypticDriver/claude-code-on-agentcore.git
@@ -67,10 +67,11 @@ cd claude-code-on-agentcore
 ./deploy/deploy.sh
 ```
 
-This creates the IAM execution role, ECR repository, builds and pushes the ARM64 image, and creates the AgentCore runtime with session storage. Takes ~5 minutes on first run. Options via env vars:
+This creates the IAM execution role and ECR repository, copies the **prebuilt ARM64 image** from ECR Public into your account (AgentCore requires the image in your own private ECR — the copy runs over the registry HTTP API, no Docker daemon involved), and creates the AgentCore runtime with session storage. Takes ~2 minutes. Options via env vars:
 
 ```bash
 REGION=us-west-2 MODEL=us.anthropic.claude-opus-4-7 ./deploy/deploy.sh
+BUILD=local ./deploy/deploy.sh    # build the image from runtime/ yourself (needs Docker buildx)
 ```
 
 > AgentCore Runtime is available in us-east-1, us-west-2, eu-west-1, ap-southeast-1 (check [current availability](https://docs.aws.amazon.com/general/latest/gr/bedrock-agentcore.html)).
@@ -149,7 +150,7 @@ This repo is a working reference, not a finished enterprise product. Before broa
 | Path | What it is |
 |---|---|
 | `runtime/` | Container image: Dockerfile, entrypoint, the SSE bridge server, and the Gateway MCP bridge |
-| `deploy/` | One-click deploy: `deploy.sh` (IAM + ECR + image), `create_runtime.py` (boto3), `setup_web_search.py` (optional Gateway web search) |
+| `deploy/` | One-click deploy: `deploy.sh` (IAM + ECR + image), `copy_image.py` (Docker-free image copy), `create_runtime.py` (boto3), `setup_web_search.py` (optional Gateway web search) |
 | `client/` | `ccr` CLI and its installer |
 
 ## Protocol
